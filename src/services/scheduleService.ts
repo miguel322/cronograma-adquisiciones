@@ -1,82 +1,104 @@
 import { auth } from '@/core/config/firebase';
-import { ScheduleRequestDTO, ScheduleResponseDTO } from '../core/types/schedule';
+import { ScheduleRequestDTO, ScheduleResponseDTO } from '@/core/types/schedule';
 
-// Firebase Cloud Function URL (v2)
-const API_BASE_URL = 'https://generateschedule-449057630387.us-central1.run.app';
+/** Next.js API Route (same origin — no CORS needed) */
+const CLOUD_FUNCTION_URL = '/api/generate-schedule';
 
-/**
- * Utility to convert File to Base64 string
- */
-const fileToBase64 = (file: File): Promise<string> => {
-  return new Promise((resolve, reject) => {
+// ---------------------------------------------------------------------------
+// Utility: File → raw Base64 string (no "data:...;base64," prefix)
+// ---------------------------------------------------------------------------
+export const fileToBase64 = (file: File): Promise<string> =>
+  new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.readAsDataURL(file);
     reader.onload = () => {
-      const base64 = reader.result?.toString().split(',')[1];
-      resolve(base64 || '');
+      // result looks like "data:application/...;base64,AAAA..." – strip the prefix
+      const raw = (reader.result as string).split(',')[1];
+      resolve(raw);
     };
-    reader.onerror = error => reject(error);
+    reader.onerror = () => reject(new Error('Error al leer el archivo'));
   });
+
+// ---------------------------------------------------------------------------
+// Utility: raw Base64 → Blob via fetch data-URL trick (clean & reliable)
+// ---------------------------------------------------------------------------
+const base64ToBlob = (base64: string): Promise<Blob> =>
+  fetch(
+    `data:application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;base64,${base64}`
+  ).then((r) => r.blob());
+
+// ---------------------------------------------------------------------------
+// Utility: trigger browser file download
+// ---------------------------------------------------------------------------
+const triggerDownload = (blob: Blob, filename: string): void => {
+  const url = window.URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  window.URL.revokeObjectURL(url);
 };
 
+// ---------------------------------------------------------------------------
+// Service
+// ---------------------------------------------------------------------------
 export const scheduleService = {
-  generateSchedule: async (request: ScheduleRequestDTO): Promise<ScheduleResponseDTO> => {
-    try {
-      const token = await auth.currentUser?.getIdToken();
-      const fileBase64 = await fileToBase64(request.templateFile as unknown as File);
+  /**
+   * Sends the template file + start date to the Cloud Function.
+   * Returns the full response including the processed Base64 file.
+   */
+  generateSchedule: async (
+    request: ScheduleRequestDTO
+  ): Promise<ScheduleResponseDTO> => {
+    // 1. Obtain Firebase Auth token (throws if user is not logged in)
+    const currentUser = auth.currentUser;
+    if (!currentUser) throw new Error('Usuario no autenticado');
+    const token = await currentUser.getIdToken();
 
-      const response = await fetch(API_BASE_URL, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
-        },
-        body: JSON.stringify({
-          fileBase64,
-          startDateStr: request.startDate
-        })
-      });
+    // 2. Convert file to raw Base64
+    const fileBase64 = await fileToBase64(request.templateFile);
 
-      if (!response.ok) throw new Error('Error al generar el cronograma');
-      
-      const result = await response.json();
-      
-      // Adaptation: The frontend expects fileBytes as property for ResultsArea/Export
-      return {
-        ...result,
-        generatedFile: result.processedFileBase64 // Mapping for compatibility
-      };
-    } catch (error) {
-      console.error('Error en generateSchedule:', error);
-      throw error;
+    // 3. POST to Cloud Function
+    const response = await fetch(CLOUD_FUNCTION_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({
+        fileBase64,
+        startDate: request.startDate, // matches Cloud Function body key
+      }),
+    });
+
+    if (!response.ok) {
+      const detail = await response.text();
+      throw new Error(`Error del servidor (${response.status}): ${detail}`);
     }
+
+    // 4. Map response to frontend DTO
+    const json = await response.json();
+
+    return {
+      referenceCode: json.referenceCode ?? `CRONO-${Date.now()}`,
+      processName: json.processName ?? '',
+      milestones: json.milestones ?? [],
+      generatedFile: json.processedFileBase64, // canonical field name from Function
+    };
   },
 
+  /**
+   * Converts the stored Base64 back to an XLSX file and forces the download.
+   */
   exportSchedule: async (data: ScheduleResponseDTO): Promise<void> => {
-    try {
-      if (!data.generatedFile) throw new Error('No hay archivo generado para exportar');
-      // With the serverless approach, the file is already in the data object as Base64
-      const byteCharacters = atob(data.generatedFile);
-      const byteNumbers = new Array(byteCharacters.length);
-      for (let i = 0; i < byteCharacters.length; i++) {
-        byteNumbers[i] = byteCharacters.charCodeAt(i);
-      }
-      const byteArray = new Uint8Array(byteNumbers);
-      const blob = new Blob([byteArray], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
-
-      const url = window.URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `Cronograma_${data.referenceCode}_${new Date().getTime()}.xlsx`;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      window.URL.revokeObjectURL(url);
-    } catch (error) {
-      console.error('Error en exportSchedule:', error);
-      throw error;
+    if (!data.generatedFile) {
+      throw new Error('No hay archivo generado para exportar');
     }
-  }
+
+    const blob = await base64ToBlob(data.generatedFile);
+    const filename = `Cronograma_${data.referenceCode}_${Date.now()}.xlsx`;
+    triggerDownload(blob, filename);
+  },
 };
-
-

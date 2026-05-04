@@ -60,7 +60,7 @@ export const generateSchedule = onRequest(async (req: any, res: any) => {
       }
 
       // 2. Input Parsing
-      const { fileBase64, startDateStr } = req.body;
+      const { fileBase64, startDate: startDateStr } = req.body;
       if (!fileBase64 || !startDateStr) {
         res.status(400).send({ error: "Missing required fields" });
         return;
