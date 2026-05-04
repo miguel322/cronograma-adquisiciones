@@ -1,7 +1,9 @@
 'use client';
 
-import React from 'react';
+import React, { useEffect } from 'react';
+import { useRouter } from 'next/navigation';
 import { useScheduleFacade } from '@/hooks/useScheduleFacade';
+import { useAuth } from '@/hooks/useAuth';
 import ControlPanel from '@/components/ControlPanel';
 import ResultsArea from '@/components/ResultsArea';
 
@@ -11,6 +13,8 @@ import ResultsArea from '@/components/ResultsArea';
  * This component acts as the container, orchestrating data via the facade hook.
  */
 export default function Home() {
+  const { user, loading } = useAuth();
+  const router = useRouter();
   const { 
     scheduleData, 
     isLoading, 
@@ -19,6 +23,20 @@ export default function Home() {
     handleGenerate, 
     handleExport 
   } = useScheduleFacade();
+
+  useEffect(() => {
+    if (!loading && !user) {
+      router.push('/login');
+    }
+  }, [user, loading, router]);
+
+  if (loading || !user) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-[#0a0a0a]">
+        <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-blue-500"></div>
+      </div>
+    );
+  }
 
   return (
     <main className="min-h-screen p-4 md:p-8 lg:p-12 max-w-7xl mx-auto">

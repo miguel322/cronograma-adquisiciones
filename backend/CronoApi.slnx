@@ -1,6 +1,0 @@
-<Solution>
-  <Project Path="CronoApi.Api/CronoApi.Api.csproj" />
-  <Project Path="CronoApi.Application/CronoApi.Application.csproj" />
-  <Project Path="CronoApi.Domain/CronoApi.Domain.csproj" />
-  <Project Path="CronoApi.Infrastructure/CronoApi.Infrastructure.csproj" />
-</Solution>
