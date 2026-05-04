@@ -3,21 +3,20 @@ import ExcelJS from 'exceljs';
 import * as admin from 'firebase-admin';
 
 // ---------------------------------------------------------------------------
-// Firebase Admin SDK — Singleton initialization
+// Firebase Admin SDK — Lazy singleton (avoids crashing at build time)
 // ---------------------------------------------------------------------------
-if (!admin.apps.length) {
-  admin.initializeApp({
+function getAdminApp(): admin.app.App {
+  if (admin.apps.length) return admin.apps[0]!;
+
+  return admin.initializeApp({
     credential: admin.credential.cert({
       projectId: process.env.FIREBASE_PROJECT_ID,
       clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
-      // Replace escaped newlines from env var
+      // Env vars escape newlines — restore them
       privateKey: process.env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, '\n'),
     }),
   });
 }
-
-const db = admin.firestore();
-const auth = admin.auth();
 
 // ---------------------------------------------------------------------------
 // Business Logic: calculate target date skipping weekends and holidays
@@ -49,6 +48,11 @@ function calculateTargetDate(startDate: Date, daysToAdd: number, holidays: Date[
 // ---------------------------------------------------------------------------
 export async function POST(request: NextRequest): Promise<NextResponse> {
   try {
+    // Lazy-initialize Admin SDK — safe to call on every request
+    const app = getAdminApp();
+    const db = admin.firestore(app);
+    const auth = admin.auth(app);
+
     // 1. Authorization — validate Firebase Bearer token
     const authHeader = request.headers.get('authorization');
     if (!authHeader?.startsWith('Bearer ')) {
